@@ -35,7 +35,7 @@ function App() {
 
     try {
       // 3. FastAPI 백엔드 서버로 요청 보내기 (URL과 바디 구조는 백엔드에 맞게 수정)
-      const response = await fetch("https://danbiv2-production.up.railway.app/chat", {
+      const response = await fetch("https://danbiv2-production.up.railway.app/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: message }) 
