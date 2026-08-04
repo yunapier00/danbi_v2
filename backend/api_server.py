@@ -22,6 +22,9 @@ from crawler_1947 import get_dankook_menu
 
 from langchain_classic.retrievers import EnsembleRetriever
 
+from collections import defaultdict
+import datetime
+
 load_dotenv()
 DB_PATH = "./chroma_db_dd2"
 
