@@ -294,13 +294,35 @@ def process_and_send_callback(user_message: str, callback_url: str):
         requests.post(callback_url, json=error_payload)
 
 
+user_daily_counts = defaultdict(int)
+last_reset_date = datetime.date.today()
+DAILY_LIMIT = 3
 @app.post("/api/kakao")
 async def kakao_chat(request: Request, background_tasks: BackgroundTasks):
+    global last_reset_date, user_daily_counts
     try:
+        today = datetime.date.today()
+        if today != last_reset_date:
+            user_daily_counts.clear()
+            last_reset_date = today
         body = await request.json()
         
-
         user_message = body["userRequest"]["utterance"]
+        user_id = body["userRequest"]["user"]["id"] 
+        if user_daily_counts[user_id] >= DAILY_LIMIT:
+            return {
+                "version": "2.0",
+                "template": {
+                    "outputs": [
+                        {
+                            "simpleText": {
+                                "text": f"하루 질문 한도 {DAILY_LIMIT}회 초과\n내일 다시 찾아와주세요!"
+                            }
+                        }
+                    ]
+                }
+            }        
+        user_daily_counts[user_id] += 1
         
 
         callback_url = body["userRequest"].get("callbackUrl")
@@ -315,7 +337,7 @@ async def kakao_chat(request: Request, background_tasks: BackgroundTasks):
             return {
                 "version": "2.0",
                 "template": {
-                    "outputs": [{"simpleText": {"text": "오류가 발생했습니다 "}}]
+                    "outputs": [{"simpleText": {"text": "콜백 URL 에러 "}}]
                 }
             }
 
