@@ -261,16 +261,12 @@ from fastapi import Request, BackgroundTasks
 import requests
 import asyncio
 
-
-def process_and_send_callback(user_message: str, callback_url: str):
+async def process_and_send_callback(user_message: str, callback_url: str):
     try:
-        local_api_url = "http://localhost:8000/api/chat"
-        response = requests.post(
-            local_api_url, 
-            json={"query": user_message, "history": ""},
-            timeout=60
-        )
-        answer = response.json().get("answer", "답변을 생성하지 못했습니다.")
+        # HTTP 통신을 거치지 않고 내부 함수 직접 호출 (포트 문제 해결 및 속도 향상)
+        request_data = ChatRequest(query=user_message, history="")
+        response_data = await chat_endpoint(request_data) 
+        answer = response_data.get("answer", "답변을 생성하지 못했습니다.")
 
         payload = {
             "version": "2.0",
@@ -285,16 +281,19 @@ def process_and_send_callback(user_message: str, callback_url: str):
             }
         }
 
+        # 카카오 서버로 콜백을 쏘는 것은 외부 통신이므로 requests 그대로 사용
         requests.post(callback_url, json=payload)
-        print("카카오 콜백 전송 성공")
+        print("✅ 카카오 콜백 전송 성공")
         
     except Exception as e:
-        print(f" 콜백 처리 중 에러 발생: {e}")
+        print(f"❌ 콜백 처리 중 에러 발생: {e}")
         error_payload = {
             "version": "2.0",
-            "template": {"outputs": [{"simpleText": {"text": "오류가 발생했습니다 "}}]}
+            "template": {"outputs": [{"simpleText": {"text": "서버 내부 오류가 발생했습니다."}}]}
         }
         requests.post(callback_url, json=error_payload)
+
+
 
 
 user_daily_counts = defaultdict(int)
