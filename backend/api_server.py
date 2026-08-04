@@ -130,7 +130,7 @@ def generate_answer(llm, context: str, query: str, history: str) -> str:
 
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+def chat_endpoint(request: ChatRequest):
     query = request.query
     history = request.history
 
@@ -261,11 +261,11 @@ from fastapi import Request, BackgroundTasks
 import requests
 import asyncio
 
-async def process_and_send_callback(user_message: str, callback_url: str):
+def process_and_send_callback(user_message: str, callback_url: str):
     try:
         # HTTP 통신을 거치지 않고 내부 함수 직접 호출 (포트 문제 해결 및 속도 향상)
         request_data = ChatRequest(query=user_message, history="")
-        response_data = await chat_endpoint(request_data) 
+        response_data = chat_endpoint(request_data) 
         answer = response_data.get("answer", "답변을 생성하지 못했습니다.")
 
         payload = {
