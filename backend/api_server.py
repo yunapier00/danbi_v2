@@ -16,7 +16,6 @@ from datetime import date
 
 from fastapi.middleware.cors import CORSMiddleware
 
-# 기존 랭체인 도구들
 from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -29,6 +28,12 @@ from langchain_classic.retrievers import EnsembleRetriever
 
 from collections import defaultdict
 import datetime
+
+from loguru import logger
+
+# rotation="00:00": 매일 자정에 새로운 로그 파일 생성
+# retention="7 days": 7일이 지난 로그 파일은 자동 삭제
+logger.add("logs/danbi_chat_{time:YYYY-MM-DD}.log", rotation="00:00", retention="7 days", level="INFO")
 
 load_dotenv()
 DB_PATH = "./chroma_db_dd2"
@@ -247,13 +252,14 @@ def chat_endpoint(request: ChatRequest):
     }
 
 from fastapi import Request, BackgroundTasks
-import requests
+#import requests
+import httpx
 import asyncio
 
-def process_and_send_callback(user_message: str, callback_url: str , user_id: str):
+async def process_and_send_callback(user_message: str, callback_url: str , user_id: str):
     try:
         request_data = ChatRequest(query=user_message, history="", user_id=user_id)
-        response_data = chat_endpoint(request_data) 
+        response_data = await asyncio.to_thread(chat_endpoint, request_data)
         answer = response_data.get("answer", "답변을 생성하지 못했습니다.")
 
         payload = {
@@ -270,16 +276,19 @@ def process_and_send_callback(user_message: str, callback_url: str , user_id: st
         }
 
 
-        requests.post(callback_url, json=payload)
-        print("✅ 카카오 콜백 전송 성공")
+        async with httpx.AsyncClient() as client:
+            await client.post(callback_url, json=payload)
+
+        logger.info(f"카카오 콜백 비동기 전송 성공 - User ID: {user_id}")
         
     except Exception as e:
-        print(f"❌ 콜백 처리 중 에러 발생: {e}")
+        logger.info(f"카카오 콜백 비동기 전송 성공 - User ID: {user_id}")
         error_payload = {
             "version": "2.0",
             "template": {"outputs": [{"simpleText": {"text": "서버 내부 오류가 발생했습니다."}}]}
         }
-        requests.post(callback_url, json=error_payload)
+        async with httpx.AsyncClient() as client:
+            await client.post(callback_url, json=error_payload)
 
 
 
@@ -335,5 +344,5 @@ async def kakao_chat(request: Request, background_tasks: BackgroundTasks):
             }
 
     except Exception as e:
-        print(f" 카카오 API 수신 에러: {e}")
+        logger.error(f"❌ 카카오 API 수신 에러: {e}")
         return {"useCallback": False}
