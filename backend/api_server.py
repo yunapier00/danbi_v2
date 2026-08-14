@@ -8,7 +8,12 @@ from typing import List
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
+
+from sqlalchemy import func
 from database import SessionLocal, ChatHistory
+from datetime import date
+
+
 from fastapi.middleware.cors import CORSMiddleware
 
 # 기존 랭체인 도구들
@@ -42,6 +47,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     query: str
     history: str = ""  
+    user_id: str = "default_user"  # 카카오톡 유저 식별자를 받기 위해 추가
 
 
 print(" 서버  로딩 중...")
@@ -62,26 +68,6 @@ try:
 except Exception as e:
     print(f" DB 로딩 에러: {e}")
 
-
-class MyEnsembleRetriever(BaseRetriever):
-    retrievers: List[BaseRetriever]
-    weights: List[float] = Field(default_factory=list)
-
-    def _get_relevant_documents(self, query: str, *, run_manager=None) -> List[Document]:
-        all_docs = []
-        for retriever in self.retrievers:
-            try:
-                docs = retriever.invoke(query)
-                all_docs.extend(docs)
-            except: pass
-        
-        unique_docs = []
-        seen = set()
-        for doc in all_docs:
-            if doc.page_content not in seen:
-                unique_docs.append(doc)
-                seen.add(doc.page_content)
-        return unique_docs[:10]
 
 def classify_intent(query: str, llm) -> str:
     q_clean = query.replace(" ", "")
@@ -133,6 +119,9 @@ def generate_answer(llm, context: str, query: str, history: str) -> str:
 def chat_endpoint(request: ChatRequest):
     query = request.query
     history = request.history
+    user_id = request.user_id #
+
+
 
     total_start_time = time.time()
 
@@ -236,7 +225,7 @@ def chat_endpoint(request: ChatRequest):
     db = SessionLocal()
     try:
         new_log = ChatHistory(
-            user_id="default_user", 
+            user_id=user_id, 
             query=query,
             answer=answer,
             category=category,
@@ -261,10 +250,9 @@ from fastapi import Request, BackgroundTasks
 import requests
 import asyncio
 
-def process_and_send_callback(user_message: str, callback_url: str):
+def process_and_send_callback(user_message: str, callback_url: str , user_id: str):
     try:
-        # HTTP 통신을 거치지 않고 내부 함수 직접 호출 (포트 문제 해결 및 속도 향상)
-        request_data = ChatRequest(query=user_message, history="")
+        request_data = ChatRequest(query=user_message, history="", user_id=user_id)
         response_data = chat_endpoint(request_data) 
         answer = response_data.get("answer", "답변을 생성하지 못했습니다.")
 
@@ -281,7 +269,7 @@ def process_and_send_callback(user_message: str, callback_url: str):
             }
         }
 
-        # 카카오 서버로 콜백을 쏘는 것은 외부 통신이므로 requests 그대로 사용
+
         requests.post(callback_url, json=payload)
         print("✅ 카카오 콜백 전송 성공")
         
@@ -296,22 +284,28 @@ def process_and_send_callback(user_message: str, callback_url: str):
 
 
 
-user_daily_counts = defaultdict(int)
-last_reset_date = datetime.date.today()
 DAILY_LIMIT = 3
 @app.post("/api/kakao")
 async def kakao_chat(request: Request, background_tasks: BackgroundTasks):
-    global last_reset_date, user_daily_counts
     try:
-        today = datetime.date.today()
-        if today != last_reset_date:
-            user_daily_counts.clear()
-            last_reset_date = today
         body = await request.json()
         
         user_message = body["userRequest"]["utterance"]
         user_id = body["userRequest"]["user"]["id"] 
-        if user_daily_counts[user_id] >= DAILY_LIMIT:
+        
+        # 1. DB 세션을 열어 오늘 날짜 기준으로 해당 유저의 질문 횟수를 카운트
+        db = SessionLocal()
+        try:
+            today = date.today()
+            daily_count = db.query(ChatHistory).filter(
+                ChatHistory.user_id == user_id,
+                func.date(ChatHistory.created_at) == today 
+            ).count()
+        finally:
+            db.close()
+
+        # 2. 제한 횟수를 초과했는지 검사
+        if daily_count >= DAILY_LIMIT:
             return {
                 "version": "2.0",
                 "template": {
@@ -324,15 +318,12 @@ async def kakao_chat(request: Request, background_tasks: BackgroundTasks):
                     ]
                 }
             }        
-        user_daily_counts[user_id] += 1
-        
 
+        # 3. 통과했다면 콜백 처리를 진행
         callback_url = body["userRequest"].get("callbackUrl")
         
         if callback_url:
-
-            background_tasks.add_task(process_and_send_callback, user_message, callback_url)
-            
+            background_tasks.add_task(process_and_send_callback, user_message, callback_url, user_id)
             return {"useCallback": True}
             
         else:
